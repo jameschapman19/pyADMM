@@ -6,6 +6,8 @@ from scipy.sparse import spdiags
 from numba import jit
 import basis_pursuit
 from numpy.linalg import cholesky
+from sklearn.linear_model import Lasso as skLasso
+from time import time
 
 
 class Lasso(basis_pursuit._ADMM):
@@ -50,7 +52,7 @@ class Lasso(basis_pursuit._ADMM):
         return x
 
 
-#@jit(nopython=True, cache=True)
+# @jit(nopython=True, cache=True)
 def _fit(A, b, lam, rho, alpha, abstol, reltol, max_iter):
     n, p = A.shape
     x = np.zeros((p, 1))
@@ -66,7 +68,7 @@ def _fit(A, b, lam, rho, alpha, abstol, reltol, max_iter):
     for k in range(max_iter):
         # x - update
         q = Atb + rho * (z - w)
-        x = invA@q
+        x = invA @ q
 
         # z-update with relaxation
         z_old = z
@@ -87,12 +89,12 @@ def _fit(A, b, lam, rho, alpha, abstol, reltol, max_iter):
     return x, history
 
 
-#@jit(nopython=True, cache=True)
+# @jit(nopython=True, cache=True)
 def _objective(A, b, lam, x, z):
     return 1 / 2 * np.sum((A @ x - b) ** 2) + lam * np.linalg.norm(z, ord=1)
 
 
-#@jit(nopython=True, cache=True)
+# @jit(nopython=True, cache=True)
 def _shrinkage(a, kappa):
     """
 
@@ -117,7 +119,14 @@ def main():
     x_true = x.toarray()
 
     lasso = Lasso(lam, 1, 1, max_iter=100)
+    t0 = time()
     x = lasso.fit(A, b)
+    print(time() - t0)
+
+    sklasso = skLasso(alpha=lam)
+    t0 = time()
+    x = sklasso.fit(A, b)
+    print(time() - t0)
 
     fig, axs = plt.subplots(3, 1, sharex=True)
 
