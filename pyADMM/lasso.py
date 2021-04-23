@@ -1,13 +1,14 @@
+from time import time
+
 import matplotlib.pyplot as plt
 import numpy as np
+from numba import jit
 from numpy.linalg import lstsq
 from scipy.sparse import random as sprandn
 from scipy.sparse import spdiags
-from numba import jit
-import basis_pursuit
-from numpy.linalg import cholesky
 from sklearn.linear_model import Lasso as skLasso
-from time import time
+
+import basis_pursuit
 
 
 class Lasso(basis_pursuit._ADMM):
@@ -52,7 +53,7 @@ class Lasso(basis_pursuit._ADMM):
         return x
 
 
-# @jit(nopython=True, cache=True)
+@jit(nopython=True, cache=True)
 def _fit(A, b, lam, rho, alpha, abstol, reltol, max_iter):
     n, p = A.shape
     x = np.zeros((p, 1))
@@ -82,19 +83,19 @@ def _fit(A, b, lam, rho, alpha, abstol, reltol, max_iter):
         history[0, k] = _objective(A, b, lam, x, z)
         history[1, k] = np.linalg.norm(x - z)
         history[2, k] = np.linalg.norm(-rho * (z - z_old))
-        history[3, k] = np.sqrt(n) * abstol + reltol * max(np.linalg.norm(x), np.linalg.norm(-z))
+        history[3, k] = np.sqrt(n) * abstol + reltol * np.max(np.array([np.linalg.norm(x), np.linalg.norm(-z)]))
         history[4, k] = np.sqrt(n) * abstol + reltol * np.linalg.norm(rho * w)
         if history[1][k] < history[3][k] and history[2][k] < history[4][k]:
             break
     return x, history
 
 
-# @jit(nopython=True, cache=True)
+@jit(nopython=True, cache=True)
 def _objective(A, b, lam, x, z):
     return 1 / 2 * np.sum((A @ x - b) ** 2) + lam * np.linalg.norm(z, ord=1)
 
 
-# @jit(nopython=True, cache=True)
+@jit(nopython=True, cache=True)
 def _shrinkage(a, kappa):
     """
 
@@ -145,7 +146,6 @@ def main():
     axs[2].set_xlabel('iter (k)')
     plt.tight_layout()
     plt.show()
-    print()
 
 
 if __name__ == "__main__":

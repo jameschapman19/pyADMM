@@ -53,7 +53,7 @@ class GroupLasso(basis_pursuit._ADMM):
         return x
 
 
-#@jit(nopython=True)
+@jit(nopython=True)
 def _fit(A, b, partition, lam, rho, alpha, abstol, reltol, max_iter):
     n, p = A.shape
     Atb = A.T @ b
@@ -92,7 +92,7 @@ def _fit(A, b, partition, lam, rho, alpha, abstol, reltol, max_iter):
     return x, history
 
 
-#@jit(nopython=True)
+@jit(nopython=True)
 def _objective(A, b, lam, cum_part, x, z):
     obj = 0
     for i, start_ind in enumerate(cum_part[:-1]):
@@ -101,7 +101,7 @@ def _objective(A, b, lam, cum_part, x, z):
     return p
 
 
-#@jit(nopython=True)
+@jit(nopython=True)
 def _shrinkage(a, kappa):
     """
 
@@ -160,7 +160,6 @@ def main():
     axs[2].set_xlabel('iter (k)')
     plt.tight_layout()
     plt.show()
-    print()
 
 
 if __name__ == "__main__":

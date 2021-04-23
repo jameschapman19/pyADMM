@@ -1,11 +1,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from numba import jit
 from numpy.linalg import lstsq
 from scipy.sparse import random as sprandn
 from scipy.sparse import spdiags
-from numba import jit
+
 import basis_pursuit
-from numpy.linalg import cholesky
 
 
 class Huber(basis_pursuit._ADMM):
@@ -51,7 +51,7 @@ class Huber(basis_pursuit._ADMM):
         return x
 
 
-# @jit(nopython=True, cache=True)
+@jit(nopython=True, cache=True)
 def _fit(A, b, transition_point, rho, alpha, abstol, reltol, max_iter):
     n, p = A.shape
     x = np.zeros((p, 1))
@@ -82,21 +82,21 @@ def _fit(A, b, transition_point, rho, alpha, abstol, reltol, max_iter):
         history[0, k] = _objective(z, transition_point)
         history[1, k] = np.linalg.norm(A @ x - z - b)
         history[2, k] = np.linalg.norm(-rho * A.T @ (z - z_old))
-        history[3, k] = np.sqrt(n) * abstol + reltol * max(np.linalg.norm(A @ x), np.linalg.norm(-z), np.linalg.norm(b))
+        history[3, k] = np.sqrt(n) * abstol + reltol * np.max(np.array([np.linalg.norm(A @ x), np.linalg.norm(-z), np.linalg.norm(b)]))
         history[4, k] = np.sqrt(n) * abstol + reltol * np.linalg.norm(rho * w)
         if history[1][k] < history[3][k] and history[2][k] < history[4][k]:
             break
     return x, history
 
 
-# @jit(nopython=True, cache=True)
+@jit(nopython=True, cache=True)
 def _objective(z, transition_point):
     l1 = np.sum((np.abs(z) < transition_point) * np.abs(z))
     l2 = np.sum((np.abs(z) > transition_point) * np.linalg.norm(z) ** 2)
     return l1 + l2
 
 
-# @jit(nopython=True, cache=True)
+@jit(nopython=True, cache=True)
 def _shrinkage(a, kappa):
     """
 
@@ -137,7 +137,6 @@ def main():
     axs[2].set_xlabel('iter (k)')
     plt.tight_layout()
     plt.show()
-    print()
 
 
 if __name__ == "__main__":

@@ -47,9 +47,10 @@ class BasisPursuit(_ADMM):
 
     def fit(self, A, b):
         # precompute static variables for x-update (projection on to Ax=b)
+        AAt = A @ A.T
         P = np.eye(A.shape[1]) - A.T @ lstsq(AAt, A)[0]
         q = A.T @ lstsq(AAt, b)[0]
-        x, history = _fit(A, b,P, q, self.rho, self.alpha, self.abstol, self.reltol, self.max_iter)
+        x, history = _fit(A, b, P, q, self.rho, self.alpha, self.abstol, self.reltol, self.max_iter)
         self.history = {
             'objval': history[0],
             'r_norm': history[1],
@@ -61,7 +62,7 @@ class BasisPursuit(_ADMM):
 
 
 @jit(nopython=True, cache=True)
-def _fit(A, b,P, q, rho, alpha, abstol, reltol, max_iter):
+def _fit(A, b, P, q, rho, alpha, abstol, reltol, max_iter):
     (m, n) = A.shape
     x = np.zeros((n, 1))
     z = np.zeros((n, 1))
@@ -128,7 +129,7 @@ def main():
     t0 = time()
     for _ in range(100):
         x = bp.fit(A, b)
-    print(time()-t0)
+    print(time() - t0)
     K = len(-bp.history['objval'])
 
     fig, axs = plt.subplots(3, 1, sharex=True)
@@ -148,8 +149,6 @@ def main():
     axs[2].set_xlabel('iter (k)')
     plt.tight_layout()
     plt.show()
-    print()
-
 
 if __name__ == "__main__":
     main()
