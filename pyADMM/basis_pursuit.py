@@ -1,7 +1,11 @@
 import numpy as np
 from scipy.sparse import random as sprandn
+from scipy.linalg import lstsq
 import matplotlib.pyplot as plt
 from abc import abstractmethod
+from numba import jit
+from time import time
+
 
 class _ADMM:
     def __init__(self, rho: float, alpha: float, quiet: bool = True, max_iter=1000, abstol=1e-4, reltol=1e-2):
@@ -40,83 +44,74 @@ class BasisPursuit(_ADMM):
         super().__init__(rho, alpha, quiet, max_iter, abstol, reltol)
 
     def fit(self, A, b):
-        (m, n) = A.shape
-        x = np.zeros((n, 1))
-        z = np.zeros((n, 1))
-        u = np.zeros((n, 1))
-
-        # if not self.quiet:
-        #    f'%3s\t%10s\t%10s\t%10s\t%10s\t%10s\n', 'iter', ...
-        #     'r np.linalg.norm', 'eps pri', 's np.linalg.norm', 'eps dual', 'objective')
-
         # precompute static variables for x-update (projection on to Ax=b)
-        AAt = A @ A.T
-        P = np.eye(n) - A.T @ np.linalg.lstsq(AAt,A)[0]
-        q = A.T @ np.linalg.lstsq(AAt, b)[0]
-
-        history = {
-            'objval': [],
-            'r_norm': [],
-            's_norm': [],
-            'eps_pri': [],
-            'eps_dual': []
+        P = np.eye(A.shape[1]) - A.T @ lstsq(AAt, A)[0]
+        q = A.T @ lstsq(AAt, b)[0]
+        x, history = _fit(A, b,P, q, self.rho, self.alpha, self.abstol, self.reltol, self.max_iter)
+        self.history = {
+            'objval': history[0],
+            'r_norm': history[1],
+            's_norm': history[2],
+            'eps_pri': history[3],
+            'eps_dual': history[4]
         }
+        return x
 
-        for k in range(self.max_iter):
-            # x-update
-            x = P @ (z - u) + q
 
-            # z-update with relaxation
-            zold = z
-            x_hat = self.alpha * x + (1 - self.alpha) * zold
-            z = self.shrinkage(x_hat + u, 1 / self.rho)
+@jit(nopython=True, cache=True)
+def _fit(A, b,P, q, rho, alpha, abstol, reltol, max_iter):
+    (m, n) = A.shape
+    x = np.zeros((n, 1))
+    z = np.zeros((n, 1))
+    u = np.zeros((n, 1))
+    AAt = A @ A.T
+    history = np.zeros((5, max_iter))
 
-            u = u + (x_hat - z)
+    for k in range(max_iter):
+        # x-update
+        x = P @ (z - u) + q
 
-            # diagnostics, reporting, termination checks
-            history['objval'].append(self.objective(A, b, x))
+        # z-update with relaxation
+        zold = z
+        x_hat = alpha * x + (1 - alpha) * zold
+        z = _shrinkage(x_hat + u, 1 / rho)
 
-            history['r_norm'].append(np.linalg.norm(x - z))
-            history['s_norm'].append(np.linalg.norm(-self.rho * (z - zold)))
+        u = u + (x_hat - z)
 
-            history['eps_pri'].append(
-                np.sqrt(n) * self.abstol + self.reltol * max(np.linalg.norm(x), np.linalg.norm(-z)))
-            history['eps_dual'].append(np.sqrt(n) * self.abstol + self.reltol * np.linalg.norm(self.rho * u))
+        # diagnostics, reporting, termination checks
+        history[0, k] = _objective(x)
+        history[1, k] = np.linalg.norm(x - z)
+        history[2, k] = np.linalg.norm(-rho * (z - zold))
+        history[3, k] = np.sqrt(n) * abstol + reltol * max(np.linalg.norm(x), np.linalg.norm(-z))
+        history[4, k] = np.sqrt(n) * abstol + reltol * np.linalg.norm(rho * u)
+        if history[1][k] < history[3][k] and history[2][k] < history[4][k]:
+            break
+    return x, history
 
-            if history['r_norm'][-1] < history['eps_pri'][-1] and history['s_norm'][-1] < history['eps_dual'][-1]:
-                break
-        self.history = history
-        return z
 
-        # if not self.quiet:
-        #    fprintf('%3d\t%10.4f\t%10.4f\t%10.4f\t%10.4f\t%10.2f\n', k, ...
-        #        history.r_norm(k), history.eps_pri(k), ...
-        #        history.s_norm(k), history.eps_dual(k), history.objval(k))
+@jit(nopython=True, cache=True)
+def _objective(x):
+    """
 
-        # if not self.quiet:
-        # toc(t_start)
+    :param A:
+    :param b:
+    :param x:
+    """
+    return np.linalg.norm(x, ord=1)
 
-    def objective(self, A, b, x):
-        """
 
-        :param A:
-        :param b:
-        :param x:
-        """
-        return np.linalg.norm(x, ord=1)
+@jit(nopython=True, cache=True)
+def _shrinkage(a, kappa):
+    """
 
-    def shrinkage(self, a, kappa):
-        """
+    :param a:
+    :param kappa:
+    """
+    return np.sign(a) * np.maximum(np.abs(a) - kappa, 0.)
 
-        :param a:
-        :param kappa:
-        """
-        diff = abs(a) - kappa
-        diff[diff < 0] = 0
-        out = np.sign(a) * diff
-        return out
 
 def main():
+    t0 = time()
     n = 30
     m = 10
     A = np.random.rand(m, n)
@@ -126,12 +121,15 @@ def main():
 
     xtrue = x
 
-    bp=BasisPursuit(1,1)
-    x=bp.fit(A,b)
+    bp = BasisPursuit(1, 1)
+    x = bp.fit(A, b)
+    t0 = time()
+    for _ in range(100):
+        x = bp.fit(A, b)
+    print(time()-t0)
+    K = len(-bp.history['objval'])
 
-    K = len(bp.history['objval'])
-
-    fig,axs=plt.subplots(3,1,sharex=True)
+    fig, axs = plt.subplots(3, 1, sharex=True)
 
     axs[0].plot(bp.history['objval'])
     axs[0].set_ylabel('f(x^k) + g(z^k)')
@@ -149,6 +147,7 @@ def main():
     plt.tight_layout()
     plt.show()
     print()
+
 
 if __name__ == "__main__":
     main()

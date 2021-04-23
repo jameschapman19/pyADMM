@@ -6,9 +6,10 @@ from scipy.sparse import spdiags
 from numba import jit
 import basis_pursuit
 from numpy.linalg import cholesky
+from random import sample
 
 
-class Lasso(basis_pursuit._ADMM):
+class LeastAbsoluteDeviations(basis_pursuit._ADMM):
     """
     lasso  Solve lasso problem via ADMM
 
@@ -26,18 +27,18 @@ class Lasso(basis_pursuit._ADMM):
     http://www.stanford.edu/~boyd/papers/distr_opt_stat_learning_admm.html
     """
 
-    def __init__(self, lam: float, rho: float, alpha: float, quiet: bool = True, max_iter=1000, abstol=1e-4,
+    def __init__(self, rho: float, alpha: float, quiet: bool = True, max_iter=1000,
+                 abstol=1e-4,
                  reltol=1e-2):
         """
 
         :param rho: augmented lagrangian parameter
         :param.alpha: typical values betwen 1.0 and 1.8
         """
-        self.lam = lam
         super().__init__(rho, alpha, quiet, max_iter, abstol, reltol)
 
     def fit(self, A, b):
-        x, history = _fit(A, b, self.lam, self.rho, self.alpha, self.abstol, self.reltol, self.max_iter)
+        x, history = _fit(A, b, self.rho, self.alpha, self.abstol, self.reltol, self.max_iter)
         self.history = {
             'objval': history[0],
             'r_norm': history[1],
@@ -48,12 +49,12 @@ class Lasso(basis_pursuit._ADMM):
         return x
 
 
-#@jit(nopython=True, cache=True)
-def _fit(A, b, lam, rho, alpha, abstol, reltol, max_iter):
+# @jit(nopython=True, cache=True)
+def _fit(A, b, rho, alpha, abstol, reltol, max_iter):
     n, p = A.shape
     x = np.zeros((p, 1))
-    z = np.zeros((p, 1))
-    w = np.zeros((p, 1))
+    z = np.zeros((n, 1))
+    w = np.zeros((n, 1))
 
     history = np.zeros((5, max_iter))
 
@@ -63,34 +64,34 @@ def _fit(A, b, lam, rho, alpha, abstol, reltol, max_iter):
 
     for k in range(max_iter):
         # x - update
-        q = Atb + rho * (z - w)
-        x = invA@q
+        q = A.T@(b+z-w)
+        x = invA @ q
 
         # z-update with relaxation
         z_old = z
-        x_hat = alpha * x + (1 - alpha) * z_old
-        z = _shrinkage(x + w, lam / rho)
+        Ax_hat = alpha * A @ x + (1 - alpha) * (z_old + b)
+        z = _shrinkage(Ax_hat - b + w, 1 / rho)
 
         # u - update
-        w = w + (x - z)
+        w = w + (Ax_hat - z - b)
 
         # diagnostics, reporting, termination checks
-        history[0, k] = _objective(A, b, lam, x, z)
-        history[1, k] = np.linalg.norm(x - z)
-        history[2, k] = np.linalg.norm(-rho * (z - z_old))
-        history[3, k] = np.sqrt(n) * abstol + reltol * max(np.linalg.norm(x), np.linalg.norm(-z))
-        history[4, k] = np.sqrt(n) * abstol + reltol * np.linalg.norm(rho * w)
+        history[0, k] = _objective(z)
+        history[1, k] = np.linalg.norm(A @ x - z - b)
+        history[2, k] = np.linalg.norm(-rho * A.T @ (z - z_old))
+        history[3, k] = np.sqrt(n) * abstol + reltol * max(np.linalg.norm(A @ x), np.linalg.norm(-z), np.linalg.norm(b))
+        history[4, k] = np.sqrt(p) * abstol + reltol * np.linalg.norm(rho * A.T @ w)
         if history[1][k] < history[3][k] and history[2][k] < history[4][k]:
             break
     return x, history
 
 
-#@jit(nopython=True, cache=True)
-def _objective(A, b, lam, x, z):
-    return 1 / 2 * np.sum((A @ x - b) ** 2) + lam * np.linalg.norm(z, ord=1)
+# @jit(nopython=True, cache=True)
+def _objective(z):
+    return np.linalg.norm(z, ord=1)
 
 
-#@jit(nopython=True, cache=True)
+@jit(nopython=True, cache=True)
 def _shrinkage(a, kappa):
     """
 
@@ -101,20 +102,16 @@ def _shrinkage(a, kappa):
 
 
 def main():
-    n = 150
-    p = 500
-    sparsity = 0.05
-    x = sprandn(p, 1, sparsity)
-    A = np.random.rand(n, p)
-    A = A @ spdiags(1 / np.sqrt(np.sum(A ** 2, axis=0)), 0, p, p)
+    n = 1000
+    p = 100
+
+    A = np.random.randn(n, p)
+    x = 10 * np.random.randn(p, 1)
     b = A @ x
+    idx = np.random.choice(n, size=int(n / 50),replace=False)
+    b[idx] = b[idx] + 1e2 * np.random.randn(len(idx),1)
 
-    lam = 0.1
-    rho = 0.05
-
-    x_true = x.toarray()
-
-    lasso = Lasso(lam, 1, 1, max_iter=100)
+    lasso = LeastAbsoluteDeviations(1, 1, max_iter=100)
     x = lasso.fit(A, b)
 
     fig, axs = plt.subplots(3, 1, sharex=True)
@@ -134,7 +131,6 @@ def main():
     axs[2].set_xlabel('iter (k)')
     plt.tight_layout()
     plt.show()
-    print()
 
 
 if __name__ == "__main__":

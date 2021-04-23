@@ -3,8 +3,9 @@ import numpy as np
 from numpy.linalg import lstsq
 from scipy.sparse import random as sprandn
 from scipy.sparse import spdiags
-
+from numba import jit
 import basis_pursuit
+from numpy.linalg import cholesky
 
 
 class GroupLasso(basis_pursuit._ADMM):
@@ -28,7 +29,7 @@ class GroupLasso(basis_pursuit._ADMM):
     http://www.stanford.edu/~boyd/papers/distr_opt_stat_learning_admm.html
     """
 
-    def __init__(self, lam: float,p, rho: float, alpha: float, quiet: bool = True, max_iter=1000, abstol=1e-4,
+    def __init__(self, lam: float, rho: float, alpha: float, quiet: bool = True, max_iter=1000, abstol=1e-4,
                  reltol=1e-2):
         """
 
@@ -36,92 +37,109 @@ class GroupLasso(basis_pursuit._ADMM):
         :param.alpha: typical values betwen 1.0 and 1.8
         """
         self.lam = lam
-        self.p=p
         super().__init__(rho, alpha, quiet, max_iter, abstol, reltol)
 
-    def fit(self, A, b):
-        m, n = A.shape
-        Atb = A.T @ b
-        x = np.zeros((n, 1))
-        z = np.zeros((n, 1))
-        w = np.zeros((n, 1))
-
-        cum_part = np.cumsum(self.p)
-
-        # if not self.quiet:
-        #    f'3s\t10s\t10s\t10s\t10s\t10s\n', 'iter', ...
-        #     'r np.linalg.norm', 'eps pri', 's np.linalg.norm', 'eps dual', 'objective')
-
-        history = {
-            'objval': [],
-            'r_norm': [],
-            's_norm': [],
-            'eps_pri': [],
-            'eps_dual': []
+    def fit(self, A, b, p):
+        x, history = _fit(A, b, p, self.lam, self.rho, self.alpha, self.abstol, self.reltol, self.max_iter)
+        self.history = {
+            'objval': history[0],
+            'r_norm': history[1],
+            's_norm': history[2],
+            'eps_pri': history[3],
+            'eps_dual': history[4]
         }
+        return x
 
-        M=np.linalg.inv(A.T@A+np.eye(A.shape[1]))
 
-        for k in range(self.max_iter):
-            # x - update
-            x=M@(Atb+self.rho*(z-w))
+#@jit(nopython=True)
+def _fit(A, b, partition, lam, rho, alpha, abstol, reltol, max_iter):
+    n, p = A.shape
+    Atb = A.T @ b
+    x = np.zeros((p, 1))
+    z = np.zeros((p, 1))
+    w = np.zeros((p, 1))
 
-            # z-update with relaxation
-            z_old=z
-            x_hat = self.alpha * x + (1 - self.alpha) * z_old
-            for i,start_ind in enumerate(cum_part):
-                z[start_ind:cum_part[i+1]] = self.shrinkage(x_hat[start_ind:cum_part[i+1]] + w[start_ind:cum_part[i+1]], self.lam /self.rho)
+    cum_part = np.cumsum(partition)
 
-            # u - update
-            w = w + (x - z)
+    history = np.zeros((5, max_iter))
 
-            # diagnostics, reporting, termination checks
-            history['objval'].append(self.objective(A, b, self.lam, cum_part, x, z))
+    invA = np.linalg.pinv(A.T @ A + rho * np.eye(p))
 
-            history['r_norm'].append(np.linalg.norm(x - z))
-            history['s_norm'].append(np.linalg.norm(-self.rho * (z - z_old)))
+    for k in range(max_iter):
 
-            history['eps_pri'].append(
-                np.sqrt(n) * self.abstol + self.reltol * max(np.linalg.norm(x), np.linalg.norm(-z)))
-            history['eps_dual'].append(np.sqrt(n) * self.abstol + self.reltol * np.linalg.norm(self.rho * w))
+        q = Atb + rho * (z - w)
+        x = invA@q
 
-            if history['r_norm'][-1] < history['eps_pri'][-1] and history['s_norm'][-1] < history['eps_dual'][-1]:
-                break
+        # z-update with relaxation
+        z_old = z
+        x_hat = alpha * x + (1 - alpha) * z_old
+        for i, start_ind in enumerate(cum_part[:-1]):
+            z[start_ind:cum_part[i + 1]] = _shrinkage(x_hat[start_ind:cum_part[i + 1]] + w[start_ind:cum_part[i + 1]], lam / rho)
 
-        self.history = history
-        return z
+        # u - update
+        w = w + (x - z)
 
-    def objective(self, A, b, lam,cum_part, x, z):
-        obj = 0
-        for i,start_ind in enumerate(cum_part):
-            obj = obj + np.linalg.norm(z[start_ind:cum_part[i+1]])
-        p = (1 / 2 * sum((A * x - b)**2) + self.lam * obj)
-        return p
+        # diagnostics, reporting, termination checks
+        history[0, k] = _objective(A, b, lam, cum_part, x, z)
+        history[1, k] = np.linalg.norm(x - z)
+        history[2, k] = np.linalg.norm(-rho * (z - z_old))
+        history[3, k] = np.sqrt(n) * abstol + reltol * np.max(np.array([np.linalg.norm(x), np.linalg.norm(-z)]))
+        history[4, k] = np.sqrt(n) * abstol + reltol * np.linalg.norm(rho * w)
+        if history[1][k] < history[3][k] and history[2][k] < history[4][k]:
+            break
+    return x, history
 
-    def shrinkage(self, a, kappa):
-        """
 
-        :param a:
-        :param kappa:
-        """
-        out = ((1 - kappa / np.linalg.norm(a))>0) @ a
-        return out
+#@jit(nopython=True)
+def _objective(A, b, lam, cum_part, x, z):
+    obj = 0
+    for i, start_ind in enumerate(cum_part[:-1]):
+        obj = obj + np.linalg.norm(z[start_ind:cum_part[i + 1]])
+    p = (1 / 2 * np.sum((A @ x - b) ** 2) + lam * obj)
+    return p
+
+
+#@jit(nopython=True)
+def _shrinkage(a, kappa):
+    """
+
+    :param a:
+    :param kappa:
+    """
+    out = a * np.maximum(np.linalg.norm(a) - kappa, 0.)/np.linalg.norm(a)
+    return out
 
 
 def main():
-    n = 150
-    p = 500
-    sparsity = 0.05
-    x0 = sprandn(p, 1, sparsity)
-    A = np.random.rand(n, p)
-    A = A @ spdiags(1 / np.sqrt(np.sum(A ** 2, axis=0)), 0, p, p)
-    b = A @ x0
+    n = 1500
+    K = 200
+    partition = np.random.randint(int(50), size=(K, 1))
+    p = int(sum(partition))
+    sparsity = 100 / p
 
-    lam = 0.1
-    rho = 0.05
-    partition = np.random.randint(50, size=(5, 1))
+    x = np.zeros((p, 1))
+    cum_part = np.cumsum(partition)
+    cum_part = np.concatenate(([0], cum_part))
+    for i, start_ind in enumerate(cum_part[:-1]):
+        x[start_ind:cum_part[i + 1]] = 0
+        if np.random.randn() < sparsity:
+            x[start_ind:cum_part[i + 1]] = np.random.randn(int(partition[i]), 1)
+
+    A = np.random.randn(n, p)
+    A = A @ spdiags(1 / np.sqrt(np.sum(A ** 2, axis=0)), 0, p, p)
+    b = A @ x + np.sqrt(0.001) * np.random.randn(n, 1)
+
+    lams = []
+    for i, start_ind in enumerate(cum_part[:-1]):
+        lams.append(np.linalg.norm(A[:, start_ind:cum_part[i + 1]].T @ b))
+
+    lambda_max = max(lams)
+    lam = 0.1 * lambda_max
+
+    x_true = x
+
     lasso = GroupLasso(lam, 1, 1, max_iter=100)
-    x = lasso.fit(A, b)
+    x = lasso.fit(A, b, partition)
 
     fig, axs = plt.subplots(3, 1, sharex=True)
 
