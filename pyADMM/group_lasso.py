@@ -16,6 +16,8 @@ class GroupLasso(basis_pursuit._ADMM):
 
     minimize 1/2*|| Ax - b ||_2^2 + \lambda sum(norm(x_i))
 
+    PORTED FROM https://web.stanford.edu/~boyd/admm.html
+
     The input p is a K-element vector giving the block sizes n_i, so that x_i
     is in R^{n_i}.
 

@@ -16,6 +16,8 @@ class Lasso(basis_pursuit._ADMM):
 
     minimize 1/2*|| Ax - b ||_2^2 + \lambda || x ||_1
 
+    PORTED FROM https://web.stanford.edu/~boyd/admm.html
+
     The solution is returned in the vector x.
 
     history is a structure that contains the objective value, the primal and

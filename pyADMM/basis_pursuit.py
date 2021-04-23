@@ -31,6 +31,8 @@ class BasisPursuit(_ADMM):
     minimize     ||x||_1
     subject to   Ax = b
 
+    PORTED FROM https://web.stanford.edu/~boyd/admm.html
+
     More information can be found in the paper linked at:
     http://www.stanford.edu/~boyd/papers/distr_opt_stat_learning_admm.html
     """
