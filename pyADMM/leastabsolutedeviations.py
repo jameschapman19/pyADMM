@@ -2,7 +2,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numba import jit
 from numpy.linalg import lstsq
-
+from numpy.linalg import cholesky
+from numpy.linalg import solve
 import basis_pursuit
 
 
@@ -54,16 +55,19 @@ def _fit(A, b, rho, alpha, abstol, reltol, max_iter):
     x = np.zeros((p, 1))
     z = np.zeros((n, 1))
     w = np.zeros((n, 1))
-
+    R = cholesky(A.T @ A)
     history = np.zeros((5, max_iter))
-
-    Atb = A.T @ b
 
     invA = np.linalg.pinv(A.T @ A + rho * np.eye(p))
 
     for k in range(max_iter):
         # x - update
         q = A.T@(b+z-w)
+        if k>0:
+            x=solve(R,solve(R.T,A.T@(b+z-w)))
+        else:
+            R=cholesky(A.T@A)
+            x=solve(R,solve(R.T,A.T@(b+z-w)))
         x = invA @ q
 
         # z-update with relaxation

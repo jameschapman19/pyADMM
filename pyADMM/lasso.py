@@ -3,9 +3,9 @@ from time import time
 import matplotlib.pyplot as plt
 import numpy as np
 from numba import jit
-from numpy.linalg import lstsq
-from scipy.sparse import random as sprandn
-from scipy.sparse import spdiags
+from numpy.linalg import lstsq, cholesky
+from numpy.linalg import solve
+from scipy import sparse
 from sklearn.linear_model import Lasso as skLasso
 
 import basis_pursuit
@@ -53,28 +53,30 @@ class Lasso(basis_pursuit._ADMM):
         return x
 
 
-@jit(nopython=True, cache=True)
+@jit(cache=True)
 def _fit(A, b, lam, rho, alpha, abstol, reltol, max_iter):
     n, p = A.shape
     x = np.zeros((p, 1))
     z = np.zeros((p, 1))
     w = np.zeros((p, 1))
-
+    z_old = np.zeros((p, 1))
     history = np.zeros((5, max_iter))
 
+    L, U = _factor(A, rho)
     Atb = A.T @ b
-
-    invA = np.linalg.pinv(A.T @ A + rho * np.eye(p))
 
     for k in range(max_iter):
         # x - update
         q = Atb + rho * (z - w)
-        x = invA @ q
+        if n >= p:
+            x = solve(U, solve(L, q))
+        else:
+            x = q / rho - A.T @ solve(U, solve(L, A @ q)) / rho ** 2
 
         # z-update with relaxation
-        z_old = z
+        z_old = z.copy()
         x_hat = alpha * x + (1 - alpha) * z_old
-        z = _shrinkage(x + w, lam / rho)
+        z = _shrinkage(x_hat + w, lam / rho)
 
         # u - update
         w = w + (x - z)
@@ -102,16 +104,33 @@ def _shrinkage(a, kappa):
     :param a:
     :param kappa:
     """
-    return np.sign(a) * np.maximum(np.abs(a) - kappa, 0.)
+    return np.maximum(0, a - kappa) - np.maximum(0, -a - kappa)
+
+
+@jit(nopython=True, cache=True)
+def _factor(A, rho):
+    """
+
+    :param A:
+    :param kappa:
+    """
+    n, p = A.shape
+    if n >= p:
+        L = cholesky(A.T.dot(A) + rho * np.eye(p))
+    else:
+        L = cholesky(np.eye(n) + 1 / rho * (A @ A.T))
+    #L = sparse.csc_matrix(L)
+    #U = sparse.csc_matrix(L.T)
+    return np.asarray(L), np.asarray(L.T)
 
 
 def main():
     n = 150
     p = 500
     sparsity = 0.05
-    x = sprandn(p, 1, sparsity)
+    x = sparse.rand(p, 1, sparsity)
     A = np.random.rand(n, p)
-    A = A @ spdiags(1 / np.sqrt(np.sum(A ** 2, axis=0)), 0, p, p)
+    A = A @ sparse.spdiags(1 / np.sqrt(np.sum(A ** 2, axis=0)), 0, p, p)
     b = A @ x
 
     lam = 0.1
@@ -120,6 +139,7 @@ def main():
     x_true = x.toarray()
 
     lasso = Lasso(lam, 1, 1, max_iter=100)
+    x = lasso.fit(A, b)
     t0 = time()
     x = lasso.fit(A, b)
     print(time() - t0)

@@ -1,11 +1,11 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from numpy.linalg import lstsq
-from scipy.sparse import random as sprandn
-from scipy.sparse import spdiags
 from numba import jit
-import basis_pursuit
 from numpy.linalg import cholesky
+from numpy.linalg import solve
+from scipy.sparse import spdiags
+
+import basis_pursuit
 
 
 class GroupLasso(basis_pursuit._ADMM):
@@ -65,12 +65,15 @@ def _fit(A, b, partition, lam, rho, alpha, abstol, reltol, max_iter):
 
     history = np.zeros((5, max_iter))
 
-    invA = np.linalg.pinv(A.T @ A + rho * np.eye(p))
+    L,U=_factor(A,rho)
 
     for k in range(max_iter):
 
         q = Atb + rho * (z - w)
-        x = invA@q
+        if n >= p:
+            x = solve(U, solve(L, q))
+        else:
+            x = q / rho - A.T @ solve(U, solve(L, A @ q)) / rho ** 2
 
         # z-update with relaxation
         z_old = z
@@ -111,6 +114,21 @@ def _shrinkage(a, kappa):
     out = a * np.maximum(np.linalg.norm(a) - kappa, 0.)/np.linalg.norm(a)
     return out
 
+@jit(nopython=True, cache=True)
+def _factor(A, rho):
+    """
+
+    :param A:
+    :param kappa:
+    """
+    n, p = A.shape
+    if n >= p:
+        L = cholesky(A.T.dot(A) + rho * np.eye(p))
+    else:
+        L = cholesky(np.eye(n) + 1 / rho * (A @ A.T))
+    #L = sparse.csc_matrix(L)
+    #U = sparse.csc_matrix(L.T)
+    return np.asarray(L), np.asarray(L.T)
 
 def main():
     n = 1500

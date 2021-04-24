@@ -2,10 +2,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numba import jit
 from numpy.linalg import lstsq
-from scipy.sparse import random as sprandn
 from scipy.sparse import spdiags
-
+from numpy.linalg import cholesky
 import basis_pursuit
+from numpy.linalg import solve
+from scipy import sparse
 
 
 class Huber(basis_pursuit._ADMM):
@@ -62,12 +63,12 @@ def _fit(A, b, transition_point, rho, alpha, abstol, reltol, max_iter):
 
     Atb = A.T @ b
 
-    invA = np.linalg.pinv(A.T @ A + rho * np.eye(p))
+    L, U = _factor(A, rho)
 
     for k in range(max_iter):
         # x - update
         q = Atb + A.T @ (z - w)
-        x = invA @ q
+        x = solve(U, solve(L, q))
 
         # z-update with relaxation
         z_old = z
@@ -82,7 +83,8 @@ def _fit(A, b, transition_point, rho, alpha, abstol, reltol, max_iter):
         history[0, k] = _objective(z, transition_point)
         history[1, k] = np.linalg.norm(A @ x - z - b)
         history[2, k] = np.linalg.norm(-rho * A.T @ (z - z_old))
-        history[3, k] = np.sqrt(n) * abstol + reltol * np.max(np.array([np.linalg.norm(A @ x), np.linalg.norm(-z), np.linalg.norm(b)]))
+        history[3, k] = np.sqrt(n) * abstol + reltol * np.max(
+            np.array([np.linalg.norm(A @ x), np.linalg.norm(-z), np.linalg.norm(b)]))
         history[4, k] = np.sqrt(n) * abstol + reltol * np.linalg.norm(rho * w)
         if history[1][k] < history[3][k] and history[2][k] < history[4][k]:
             break
@@ -106,6 +108,23 @@ def _shrinkage(a, kappa):
     return np.sign(a) * np.maximum(np.abs(a) - kappa, 0.)
 
 
+@jit(nopython=True, cache=True)
+def _factor(A, rho):
+    """
+
+    :param A:
+    :param kappa:
+    """
+    n, p = A.shape
+    if n >= p:
+        L = cholesky(A.T.dot(A) + rho * np.eye(p))
+    else:
+        L = cholesky(np.eye(n) + 1 / rho * (A @ A.T))
+    # L = sparse.csc_matrix(L)
+    # U = sparse.csc_matrix(L.T)
+    return np.asarray(L), np.asarray(L.T)
+
+
 def main():
     n = 5000
     p = 200
@@ -113,7 +132,7 @@ def main():
     A = np.random.randn(n, p)
     A = A @ spdiags(1 / np.sqrt(np.sum(A ** 2, axis=0)), 0, p, p)
     b = A @ x + np.sqrt(0.01) * np.random.randn(n, 1)
-    b = b + 10 * sprandn(n, 1, 200 / n)
+    b = b + 10 * sparse.rand(n, 1, 200 / n)
 
     x_true = x
 

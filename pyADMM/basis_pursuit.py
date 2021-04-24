@@ -1,6 +1,6 @@
 import numpy as np
-from scipy.sparse import random as sprandn
-from scipy.linalg import lstsq
+from scipy import sparse
+from scipy.sparse.linalg import spsolve
 import matplotlib.pyplot as plt
 from abc import abstractmethod
 from numba import jit
@@ -48,8 +48,8 @@ class BasisPursuit(_ADMM):
     def fit(self, A, b):
         # precompute static variables for x-update (projection on to Ax=b)
         AAt = A @ A.T
-        P = np.eye(A.shape[1]) - A.T @ lstsq(AAt, A)[0]
-        q = A.T @ lstsq(AAt, b)[0]
+        P = np.eye(A.shape[1]) - A.T @ sparse.linalg.spsolve(AAt, A)[0]
+        q = A.T @ spsolve(AAt, b)[0]
         x, history = _fit(A, b, P, q, self.rho, self.alpha, self.abstol, self.reltol, self.max_iter)
         self.history = {
             'objval': history[0],
@@ -110,7 +110,7 @@ def _shrinkage(a, kappa):
     :param a:
     :param kappa:
     """
-    return np.sign(a) * np.maximum(np.abs(a) - kappa, 0.)
+    return np.maximum(0,a-kappa)-np.maximum(0,-a-kappa)
 
 
 def main():
@@ -119,7 +119,7 @@ def main():
     m = 10
     A = np.random.rand(m, n)
 
-    x = sprandn(n, 1, density=0.1)
+    x = sparse.rand(n, 1, density=0.1)
     b = A * x
 
     xtrue = x
