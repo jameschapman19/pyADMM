@@ -97,11 +97,12 @@ def _fit(A, b, partition, lam, rho, alpha, abstol, reltol, max_iter):
 
 @jit(nopython=True)
 def _objective(A, b, lam, cum_part, x, z):
-    obj = 0
-    for i, start_ind in enumerate(cum_part[:-1]):
-        obj = obj + np.linalg.norm(z[start_ind:cum_part[i + 1]])
-    p = (1 / 2 * np.sum((A @ x - b) ** 2) + lam * obj)
-    return p
+    obj = sum(
+        np.linalg.norm(z[start_ind : cum_part[i + 1]])
+        for i, start_ind in enumerate(cum_part[:-1])
+    )
+
+    return (1 / 2 * np.sum((A @ x - b) ** 2) + lam * obj)
 
 
 @jit(nopython=True)
@@ -111,8 +112,7 @@ def _shrinkage(a, kappa):
     :param a:
     :param kappa:
     """
-    out = a * np.maximum(np.linalg.norm(a) - kappa, 0.)/np.linalg.norm(a)
-    return out
+    return a * np.maximum(np.linalg.norm(a) - kappa, 0.)/np.linalg.norm(a)
 
 @jit(nopython=True, cache=True)
 def _factor(A, rho):
@@ -149,9 +149,10 @@ def main():
     A = A @ spdiags(1 / np.sqrt(np.sum(A ** 2, axis=0)), 0, p, p)
     b = A @ x + np.sqrt(0.001) * np.random.randn(n, 1)
 
-    lams = []
-    for i, start_ind in enumerate(cum_part[:-1]):
-        lams.append(np.linalg.norm(A[:, start_ind:cum_part[i + 1]].T @ b))
+    lams = [
+        np.linalg.norm(A[:, start_ind : cum_part[i + 1]].T @ b)
+        for i, start_ind in enumerate(cum_part[:-1])
+    ]
 
     lambda_max = max(lams)
     lam = 0.1 * lambda_max

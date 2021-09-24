@@ -106,7 +106,7 @@ def _shrinkage(a, kappa):
 def main():
     n = 100
     x = np.ones((n, 1))
-    for j in range(3):
+    for _ in range(3):
         idx = np.random.randint(n, size=1)
         k = np.random.randint(10, size=1)
         x[int(idx / 2):int(idx)] = k * x[int(idx / 2):int(idx)]

@@ -15,7 +15,6 @@ class _ADMM:
         self.max_iter = max_iter
         self.abstol = abstol
         self.reltol = reltol
-        pass
 
     @abstractmethod
     def objective(self, *args):
