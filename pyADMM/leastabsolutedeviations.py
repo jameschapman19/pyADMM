@@ -63,11 +63,9 @@ def _fit(A, b, rho, alpha, abstol, reltol, max_iter):
     for k in range(max_iter):
         # x - update
         q = A.T@(b+z-w)
-        if k>0:
-            x=solve(R,solve(R.T,A.T@(b+z-w)))
-        else:
+        if k <= 0:
             R=cholesky(A.T@A)
-            x=solve(R,solve(R.T,A.T@(b+z-w)))
+        x=solve(R,solve(R.T,A.T@(b+z-w)))
         x = invA @ q
 
         # z-update with relaxation
